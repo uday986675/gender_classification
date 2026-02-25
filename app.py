@@ -39,7 +39,12 @@ def load_model():
     
     try:
         if os.path.exists(model_path):
-            model = keras.models.load_model(model_path)
+            # Try loading with safe_mode=False for compatibility with older saved models
+            try:
+                model = keras.models.load_model(model_path, safe_mode=False)
+            except TypeError:
+                # If safe_mode is not supported, try standard loading
+                model = keras.models.load_model(model_path)
             return model
         else:
             st.error(f"❌ Model file not found at: {os.path.abspath(model_path)}")
@@ -52,7 +57,16 @@ def load_model():
             st.stop()
     except Exception as e:
         st.error(f"❌ Error loading model: {str(e)}")
-        st.info("The model file may be corrupted or incompatible with the current TensorFlow version.")
+        st.warning("**The model file appears to be corrupted or from an incompatible TensorFlow version.**")
+        st.info("""
+        **To fix this:**
+        1. Go back to where you trained the model
+        2. Re-save it using the latest code:
+        ```python
+        model.save('Gender_classification.keras')
+        ```
+        3. Replace the corrupted file in your repository
+        """)
         st.stop()
 
 def preprocess_image(image, target_size=(224, 224)):
