@@ -36,12 +36,24 @@ st.markdown("""
 def load_model():
     """Load the pre-trained gender classification model"""
     model_path = "Gender_classification.keras"
-    if os.path.exists(model_path):
-        model = keras.models.load_model(model_path)
-        return model
-    else:
-        st.error("Model file not found. Please ensure 'Gender_classification.keras' is in the same directory.")
-        return None
+    
+    try:
+        if os.path.exists(model_path):
+            model = keras.models.load_model(model_path)
+            return model
+        else:
+            st.error(f"❌ Model file not found at: {os.path.abspath(model_path)}")
+            st.info("**Solution:** Please ensure 'Gender_classification.keras' is:")
+            st.markdown("""
+            - In the same directory as `app.py`
+            - Committed and pushed to your GitHub repository
+            - Not in .gitignore
+            """)
+            st.stop()
+    except Exception as e:
+        st.error(f"❌ Error loading model: {str(e)}")
+        st.info("The model file may be corrupted or incompatible with the current TensorFlow version.")
+        st.stop()
 
 def preprocess_image(image, target_size=(224, 224)):
     """Preprocess image for model prediction"""
