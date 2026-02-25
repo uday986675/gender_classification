@@ -4,182 +4,324 @@ from PIL import Image
 import tensorflow as tf
 from tensorflow import keras
 import os
+from datetime import datetime
 
-# Set page config
+# ============================================================================
+# PAGE CONFIGURATION
+# ============================================================================
 st.set_page_config(
-    page_title="Gender Classification",
+    page_title="Gender Classification Model",
     page_icon="👤",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# ============================================================================
+# CUSTOM STYLING
+# ============================================================================
 st.markdown("""
     <style>
-    .main-title {
+    .main-container {
+        padding: 2rem;
+    }
+    .title {
         text-align: center;
-        color: #2E86AB;
-        font-size: 2.5em;
+        color: #1f77b4;
+        font-size: 3em;
         font-weight: bold;
-        margin-bottom: 10px;
+        margin-bottom: 0.5rem;
     }
     .subtitle {
         text-align: center;
-        color: #555;
-        font-size: 1.1em;
-        margin-bottom: 30px;
+        color: #666;
+        font-size: 1.2em;
+        margin-bottom: 2rem;
+    }
+    .result-box {
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+    }
+    .success-box {
+        background-color: #d4edda;
+        border-left: 5px solid #28a745;
+    }
+    .error-box {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
+    }
+    .info-box {
+        background-color: #d1ecf1;
+        border-left: 5px solid #17a2b8;
     }
     </style>
 """, unsafe_allow_html=True)
 
+# ============================================================================
+# CACHE MODEL LOADING
+# ============================================================================
 @st.cache_resource
 def load_model():
     """Load the pre-trained gender classification model"""
     model_path = "Gender_classification.keras"
     
     try:
-        if os.path.exists(model_path):
-            # Try loading with safe_mode=False for compatibility with older saved models
-            try:
-                model = keras.models.load_model(model_path, safe_mode=False)
-            except TypeError:
-                # If safe_mode is not supported, try standard loading
-                model = keras.models.load_model(model_path)
-            return model
-        else:
-            st.error(f"❌ Model file not found at: {os.path.abspath(model_path)}")
-            st.info("**Solution:** Please ensure 'Gender_classification.keras' is:")
-            st.markdown("""
-            - In the same directory as `app.py`
-            - Committed and pushed to your GitHub repository
-            - Not in .gitignore
-            """)
-            st.stop()
+        if not os.path.exists(model_path):
+            return None, "Model file not found"
+        
+        # Try loading with different methods
+        try:
+            model = keras.models.load_model(model_path, safe_mode=False)
+        except TypeError:
+            # Fallback for TensorFlow versions without safe_mode parameter
+            model = keras.models.load_model(model_path)
+        
+        return model, "Success"
+    
     except Exception as e:
-        st.error(f"❌ Error loading model: {str(e)}")
-        st.warning("**The model file appears to be corrupted or from an incompatible TensorFlow version.**")
-        st.info("""
-        **To fix this:**
-        1. Go back to where you trained the model
-        2. Re-save it using the latest code:
-        ```python
-        model.save('Gender_classification.keras')
-        ```
-        3. Replace the corrupted file in your repository
-        """)
-        st.stop()
+        return None, str(e)
 
+# ============================================================================
+# IMAGE PREPROCESSING
+# ============================================================================
 def preprocess_image(image, target_size=(224, 224)):
     """Preprocess image for model prediction"""
-    img = image.resize(target_size)
-    img_array = np.array(img)
+    try:
+        # Convert to RGB if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Resize image
+        img = image.resize(target_size)
+        img_array = np.array(img, dtype=np.float32)
+        
+        # Normalize the image
+        if img_array.max() > 1:
+            img_array = img_array / 255.0
+        
+        # Add batch dimension
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        return img_array, None
     
-    # Normalize the image
-    if img_array.max() > 1:
-        img_array = img_array / 255.0
-    
-    # Add batch dimension
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    return img_array
+    except Exception as e:
+        return None, f"Error preprocessing image: {str(e)}"
 
+# ============================================================================
+# MAKE PREDICTION
+# ============================================================================
+def make_prediction(model, processed_image):
+    """Make gender prediction on the processed image"""
+    try:
+        prediction = model.predict(processed_image, verbose=0)
+        
+        # Handle different output shapes
+        if len(prediction.shape) == 2:
+            if prediction.shape[1] == 1:
+                # Binary classification with sigmoid
+                confidence = float(prediction[0][0])
+                predicted_class = "Female" if confidence < 0.5 else "Male"
+                confidence_score = (1 - confidence) * 100 if confidence < 0.5 else confidence * 100
+            else:
+                # Multi-class classification with softmax
+                class_idx = np.argmax(prediction[0])
+                confidence_score = float(np.max(prediction[0])) * 100
+                classes = ["Female", "Male"]
+                predicted_class = classes[class_idx] if class_idx < len(classes) else f"Class {class_idx}"
+        else:
+            return None, None, "Unexpected model output shape"
+        
+        return predicted_class, confidence_score, None
+    
+    except Exception as e:
+        return None, None, f"Error making prediction: {str(e)}"
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
 def main():
-    st.markdown('<div class="main-title">👤 Gender Classification</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">Upload an image to classify gender</div>', unsafe_allow_html=True)
+    # Title
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown('<div class="title">👤 Gender Classification</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtitle">AI-Powered Image Analysis</div>', unsafe_allow_html=True)
     
     # Load model
-    model = load_model()
+    model, load_status = load_model()
     
     if model is None:
+        st.error("❌ Failed to load model")
+        st.error(f"Error: {load_status}")
         st.stop()
     
-    # Sidebar information
-    with st.sidebar:
-        st.header("📋 Instructions")
-        st.markdown("""
-        1. Upload an image (JPG, PNG)
-        2. The model will process the image
-        3. View the prediction result
-        
-        **Supported formats:** JPG, PNG
-        
-        **Note:** Best results with clear, front-facing photos
-        """)
-        
-        st.header("ℹ️ Model Info")
-        st.info(f"**Model:** Gender Classification CNN\n\n**Classes:** Male, Female")
+    # Create tabs
+    tab1, tab2, tab3 = st.tabs(["🖼️ Predict", "📋 Instructions", "ℹ️ About"])
     
-    # File uploader
-    uploaded_file = st.file_uploader(
-        "Choose an image...",
-        type=["jpg", "jpeg", "png"],
-        help="Upload a clear photo for best results"
-    )
-    
-    if uploaded_file is not None:
-        # Display uploaded image
-        image = Image.open(uploaded_file)
-        
+    # ========================================================================
+    # TAB 1: PREDICTION
+    # ========================================================================
+    with tab1:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("📸 Uploaded Image")
-            st.image(image, use_column_width=True)
-        
-        # Make prediction
-        with st.spinner("🔍 Analyzing image..."):
-            processed_image = preprocess_image(image)
-            prediction = model.predict(processed_image, verbose=0)
+            st.subheader("📸 Upload Image")
+            uploaded_file = st.file_uploader(
+                "Choose an image (JPG, PNG, JPEG)",
+                type=["jpg", "jpeg", "png"],
+                help="Upload a clear photo of a face for best results"
+            )
             
-            # Get class and confidence
-            confidence = float(prediction[0][0]) * 100 if len(prediction[0]) == 1 else max(prediction[0]) * 100
-            
-            # Determine gender class (assuming binary classification)
-            if len(prediction[0]) == 1:
-                # Sigmoid output
-                predicted_class = "Female" if prediction[0][0] < 0.5 else "Male"
-                confidence = (1 - prediction[0][0]) * 100 if prediction[0][0] < 0.5 else prediction[0][0] * 100
-            else:
-                # Softmax output
-                class_idx = np.argmax(prediction[0])
-                predicted_class = "Male" if class_idx == 0 else "Female"
-                confidence = prediction[0][class_idx] * 100
+            if uploaded_file is not None:
+                # Load and display image
+                image = Image.open(uploaded_file)
+                st.image(image, use_column_width=True, caption="Uploaded Image")
         
         with col2:
             st.subheader("🎯 Prediction Result")
             
-            # Display result with color coding
-            if predicted_class == "Male":
-                st.markdown(f'<h2 style="color: #3498db; text-align: center;">👨 {predicted_class}</h2>', unsafe_allow_html=True)
+            if uploaded_file is not None:
+                with st.spinner("🔍 Analyzing image..."):
+                    # Preprocess image
+                    processed_image, prep_error = preprocess_image(image)
+                    
+                    if prep_error:
+                        st.error(prep_error)
+                    else:
+                        # Make prediction
+                        predicted_class, confidence_score, pred_error = make_prediction(model, processed_image)
+                        
+                        if pred_error:
+                            st.error(pred_error)
+                        else:
+                            # Display results
+                            col_res1, col_res2 = st.columns(2)
+                            
+                            with col_res1:
+                                if predicted_class == "Male":
+                                    st.markdown(
+                                        f'<div class="result-box success-box"><h2 style="margin:0; color:#155724;">👨 {predicted_class}</h2></div>',
+                                        unsafe_allow_html=True
+                                    )
+                                else:
+                                    st.markdown(
+                                        f'<div class="result-box success-box"><h2 style="margin:0; color:#155724;">👩 {predicted_class}</h2></div>',
+                                        unsafe_allow_html=True
+                                    )
+                            
+                            with col_res2:
+                                st.metric(
+                                    label="Confidence Score",
+                                    value=f"{confidence_score:.1f}%",
+                                    delta=None
+                                )
+                            
+                            # Confidence bar
+                            st.progress(min(confidence_score / 100, 1.0))
+                            
+                            # Confidence level indicator
+                            if confidence_score >= 90:
+                                st.success("✅ Very High Confidence")
+                            elif confidence_score >= 75:
+                                st.info("✓ High Confidence")
+                            elif confidence_score >= 60:
+                                st.warning("⚠️ Medium Confidence")
+                            else:
+                                st.error("❌ Low Confidence - Result may be unreliable")
+                            
+                            # Timestamp
+                            st.caption(f"Prediction made at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
             else:
-                st.markdown(f'<h2 style="color: #e74c3c; text-align: center;">👩 {predicted_class}</h2>', unsafe_allow_html=True)
-            
-            st.metric(
-                label="Confidence",
-                value=f"{confidence:.2f}%",
-                delta=None
-            )
-            
-            # Confidence bar
-            st.progress(min(confidence / 100, 1.0))
-            
-            if confidence < 70:
-                st.warning("⚠️ Low confidence. Result may be unreliable.")
-            elif confidence >= 90:
-                st.success("✅ High confidence prediction")
+                st.info("👆 Upload an image to see predictions")
     
-    else:
-        st.info("👆 Please upload an image to get started!")
+    # ========================================================================
+    # TAB 2: INSTRUCTIONS
+    # ========================================================================
+    with tab2:
+        st.subheader("📋 How to Use")
         
-        # Add sample instructions
-        with st.expander("💡 Tips for best results"):
+        st.markdown("""
+        ### Step-by-Step Guide:
+        
+        1. **Upload an Image**
+           - Click the upload area in the "Predict" tab
+           - Select a JPG or PNG image file
+           - The image should contain a clear face
+        
+        2. **Wait for Analysis**
+           - The model will process your image
+           - This usually takes a few seconds
+        
+        3. **View Results**
+           - See the predicted gender (Male/Female)
+           - Check the confidence score (0-100%)
+           - Higher confidence = more reliable prediction
+        
+        ### Tips for Best Results:
+        - ✅ Use clear, well-lit photos
+        - ✅ Face should be front-facing
+        - ✅ High resolution images work better
+        - ✅ Avoid heavy shadows or obstructions
+        - ✅ Ensure face is clearly visible
+        - ❌ Avoid heavily edited or filtered images
+        - ❌ Don't use cartoons or drawings
+        
+        ### Confidence Score Guide:
+        - **90-100%**: Very High Confidence ✅
+        - **75-89%**: High Confidence ✓
+        - **60-74%**: Medium Confidence ⚠️
+        - **Below 60%**: Low Confidence - Unreliable ❌
+        """)
+    
+    # ========================================================================
+    # TAB 3: ABOUT
+    # ========================================================================
+    with tab3:
+        st.subheader("ℹ️ About This Application")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
             st.markdown("""
-            - Use clear, well-lit photos
-            - Front-facing images work best
-            - Avoid heavy shadows or obstructions
-            - Ensure the face is clearly visible
-            - High resolution images are preferred
+            ### Model Information
+            - **Type**: Convolutional Neural Network (CNN)
+            - **Task**: Binary Gender Classification
+            - **Classes**: Male, Female
+            - **Input Size**: 224×224 pixels
+            - **Architecture**: Deep Learning Model
             """)
+        
+        with col2:
+            st.markdown("""
+            ### Application Info
+            - **Framework**: Streamlit
+            - **Backend**: TensorFlow/Keras
+            - **Language**: Python
+            - **Deployment**: Streamlit Cloud
+            - **Version**: 1.0
+            """)
+        
+        st.divider()
+        
+        st.markdown("""
+        ### Disclaimer
+        This model provides predictions based on visual features in images. 
+        Results should not be used for critical decision-making without human verification. 
+        The model may have limitations and biases.
+        
+        ### Privacy
+        - Images are processed locally
+        - No images are stored or logged
+        - No data collection occurs
+        """)
+        
+        st.markdown("""
+        ---
+        **Created with ❤️ using Streamlit & TensorFlow**
+        """)
 
+# ============================================================================
+# RUN APPLICATION
+# ============================================================================
 if __name__ == "__main__":
     main()
